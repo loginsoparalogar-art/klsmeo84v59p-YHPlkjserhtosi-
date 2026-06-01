@@ -10,7 +10,7 @@ const map = L.map('map', {
   markerZoomAnimation: true
 }).setView([-9.6498, -35.7089], 13);
 
-// ALTERAÇÃO: Mudança para o OpenStreetMap Standard (Linhas fortes, nomes pretos e ruas coloridas)
+// Camada OpenStreetMap padrão (Linhas de ruas fortes e nítidas para o dia)
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap contributors',
   updateWhenIdle: true,
@@ -26,11 +26,15 @@ let userLocationLayer = L.layerGroup().addTo(map);
 let showBikes = true;
 let showParking = true;
 
-// Otimização de performance: Carrega os SVGs externos dentro do círculo CSS dinâmico
-function createVehicleIcon(color, svgFile) {
+// MODIFICAÇÃO: Removeu a tag <img> e passou a usar letras em alta definição (B e S)
+function createVehicleIcon(isBike) {
+  // Define as cores e letras solicitadas
+  const bgColor = isBike ? "#10b981" : "#f97316"; // Verde para Bike, Laranja para Scooter
+  const text = isBike ? "B" : "S";
+
   return L.divIcon({
     className: 'vehicle-div-icon',
-    html: `<div style="background-color: ${color}; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4);"><img src="${svgFile}" style="width: 14px; height: 14px; display: block;" /></div>`,
+    html: `<div style="background-color: ${bgColor}; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4); color: white; font-weight: 900; font-size: 15px; font-family: Arial, sans-serif; line-height: 1;">${text}</div>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
     popupAnchor: [0, -12]
@@ -45,14 +49,13 @@ const userIcon = L.divIcon({
   iconAnchor: [7, 7]
 });
 
-// REFORÇO VISUAL: CSS injetado para o efeito do GPS e para forçar o contraste das linhas do mapa
+// REFORÇO VISUAL: Mantém o filtro que deixa as linhas das ruas e calçadas mais escuras no sol
 const style = document.createElement('style');
 style.innerHTML = `
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
   
-  /* Deixa os textos, calçadas e linhas de trânsito do mapa muito mais escuros, nítidos e fáceis de ler no sol */
   .leaflet-tile { 
-    filter: contrast(1.22) brightness(0.92) saturate(1.1) !important; 
+    filter: contrast(1.25) brightness(0.92) saturate(1.1) !important; 
   }
 `;
 document.head.appendChild(style);
@@ -119,7 +122,7 @@ async function carregarMapa() {
   bikeLayer.clearLayers();
   parkingLayer.clearLayers();
 
-  // 1. DESENHANDO VEÍCULOS (bike.svg e scooter.svg)
+  // 1. DESENHANDO VEÍCULOS (Renderizando apenas texto B e S com CSS rápido)
   if (rawBikes) {
     const bikes = extrairPontos(rawBikes);
     bikes.forEach(b => {
@@ -131,10 +134,8 @@ async function carregarMapa() {
 
       let isBike = info.type && info.type.toLowerCase().includes('bike');
       
-      let corIcone = isBike ? "#10b981" : "#f97316"; 
-      let fileToUse = isBike ? "bike.svg" : "scooter.svg";
-      
-      let iconToUse = createVehicleIcon(corIcone, fileToUse);
+      // Gera o ícone de texto puro de acordo com o tipo
+      let iconToUse = createVehicleIcon(isBike);
 
       let veiculoType = isBike ? "Bicicleta" : "Patinete";
       let bateriaRaw = info.battery_percent || 0;
