@@ -10,12 +10,12 @@ const map = L.map('map', {
   markerZoomAnimation: true
 }).setView([-9.6498, -35.7089], 13);
 
-// ALTERAÇÃO CRÍTICA: Camada de mapa CLARA (Positron), ideal para visualização sob o sol
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  attribution: '© OpenStreetMap contributors © CARTO',
-  updateWhenIdle: true,       // Só renderiza novos blocos do mapa quando o movimento parar
-  updateWhenZooming: false,   // Bloqueia requisições pesadas DURANTE o efeito de zoom
-  keepBuffer: 2               // Mantém blocos na memória para evitar tela branca
+// ALTERAÇÃO: Mudança para o OpenStreetMap Standard (Linhas fortes, nomes pretos e ruas coloridas)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors',
+  updateWhenIdle: true,
+  updateWhenZooming: false,
+  keepBuffer: 2
 }).addTo(map);
 
 // Grupos para ligar/desligar
@@ -30,7 +30,7 @@ let showParking = true;
 function createVehicleIcon(color, svgFile) {
   return L.divIcon({
     className: 'vehicle-div-icon',
-    html: `<div style="background-color: ${color}; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.25);"><img src="${svgFile}" style="width: 14px; height: 14px; display: block;" /></div>`,
+    html: `<div style="background-color: ${color}; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4);"><img src="${svgFile}" style="width: 14px; height: 14px; display: block;" /></div>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
     popupAnchor: [0, -12]
@@ -45,16 +45,23 @@ const userIcon = L.divIcon({
   iconAnchor: [7, 7]
 });
 
-// Efeito pulsante do GPS
+// REFORÇO VISUAL: CSS injetado para o efeito do GPS e para forçar o contraste das linhas do mapa
 const style = document.createElement('style');
-style.innerHTML = `@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }`;
+style.innerHTML = `
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
+  
+  /* Deixa os textos, calçadas e linhas de trânsito do mapa muito mais escuros, nítidos e fáceis de ler no sol */
+  .leaflet-tile { 
+    filter: contrast(1.22) brightness(0.92) saturate(1.1) !important; 
+  }
+`;
 document.head.appendChild(style);
 
 // Função para criar o ícone 'P' dos estacionamentos
 function createParkingDivIcon(color, size = 20) {
   return L.divIcon({
     className: 'parking-div-icon', 
-    html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; color: white; font-weight: bold; font-size: ${size*0.7}px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">P</div>`,
+    html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; color: white; font-weight: bold; font-size: ${size*0.7}px; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">P</div>`,
     iconSize: [size, size],
     iconAnchor: [size/2, size/2],
     popupAnchor: [0, -size/2]
@@ -112,20 +119,19 @@ async function carregarMapa() {
   bikeLayer.clearLayers();
   parkingLayer.clearLayers();
 
-  // 1. DESENHANDO VEÍCULOS (Apontando para bike.svg e scooter.svg)
+  // 1. DESENHANDO VEÍCULOS (bike.svg e scooter.svg)
   if (rawBikes) {
     const bikes = extrairPontos(rawBikes);
     bikes.forEach(b => {
       const info = b.info || {};
 
-      // Filtros de status (Apenas Disponíveis)
       if (info.ordered === true || info.booked === true || info.is_rented === true) return;
       let statusText = String(info.status || info.status_name || info.state || '').toLowerCase();
       if (statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus')) return;
 
       let isBike = info.type && info.type.toLowerCase().includes('bike');
       
-      let corIcone = isBike ? "#10b981" : "#f97316"; // Verde para Bike, Laranja para Patinete
+      let corIcone = isBike ? "#10b981" : "#f97316"; 
       let fileToUse = isBike ? "bike.svg" : "scooter.svg";
       
       let iconToUse = createVehicleIcon(corIcone, fileToUse);
