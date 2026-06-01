@@ -3,38 +3,41 @@ const CITY_ID = "66faae66cd18349215c90187";
 const BIKES_URL = `https://logistic.gojet.app/api/v0/urent/bikes/?city_id=${CITY_ID}&page=1&limit=1000`;
 const PARKING_URL = `https://logistic.gojet.app/api/v0/urent/parkings/?city_id=${CITY_ID}&page=1&limit=1000`;
 
-// Inicializa o mapa focado em Maceió
-const map = L.map('map').setView([-9.6498, -35.7089], 13);
+// Inicializa o mapa com animações nativas ativas
+const map = L.map('map', {
+  fadeAnimation: true,
+  zoomAnimation: true,
+  markerZoomAnimation: true
+}).setView([-9.6498, -35.7089], 13);
 
-// Camada de fundo (mapa escuro)
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '© OpenStreetMap contributors'
+// ALTERAÇÃO CRÍTICA: Camada de mapa CLARA (Positron), ideal para visualização sob o sol
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap contributors © CARTO',
+  updateWhenIdle: true,       // Só renderiza novos blocos do mapa quando o movimento parar
+  updateWhenZooming: false,   // Bloqueia requisições pesadas DURANTE o efeito de zoom
+  keepBuffer: 2               // Mantém blocos na memória para evitar tela branca
 }).addTo(map);
 
 // Grupos para ligar/desligar
 let bikeLayer = L.layerGroup().addTo(map);
 let parkingLayer = L.layerGroup().addTo(map);
-let userLocationLayer = L.layerGroup().addTo(map); // NOVA CAMADA: GPS do Usuário
+let userLocationLayer = L.layerGroup().addTo(map);
 
 let showBikes = true;
 let showParking = true;
 
-// --- DEFINIÇÃO DOS ÍCONES ---
-const scooterIcon = L.icon({
-  iconUrl: 'scooter_icon.png', 
-  iconSize: [28, 28],
-  iconAnchor: [14, 14],
-  popupAnchor: [0, -14] 
-});
+// Otimização de performance: Carrega os SVGs externos dentro do círculo CSS dinâmico
+function createVehicleIcon(color, svgFile) {
+  return L.divIcon({
+    className: 'vehicle-div-icon',
+    html: `<div style="background-color: ${color}; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.25);"><img src="${svgFile}" style="width: 14px; height: 14px; display: block;" /></div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    popupAnchor: [0, -12]
+  });
+}
 
-const bikeIcon = L.icon({
-  iconUrl: 'bike_icon.png', 
-  iconSize: [28, 28],
-  iconAnchor: [14, 14],
-  popupAnchor: [0, -14]
-});
-
-// Ponto azul dinâmico para a sua localização atual
+// Ponto azul dinâmico para a localização do usuário (GPS)
 const userIcon = L.divIcon({
   className: 'user-location-icon',
   html: `<div style="background-color: #007aff; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px #007aff; animation: pulse 2s infinite;"></div>`,
@@ -42,42 +45,41 @@ const userIcon = L.divIcon({
   iconAnchor: [7, 7]
 });
 
-// Adiciona o efeito pulsante do seu ponto azul na tela
+// Efeito pulsante do GPS
 const style = document.createElement('style');
 style.innerHTML = `@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }`;
 document.head.appendChild(style);
 
-// Função para criar o ícone 'P' colorido (HTML)
+// Função para criar o ícone 'P' dos estacionamentos
 function createParkingDivIcon(color, size = 20) {
   return L.divIcon({
     className: 'parking-div-icon', 
-    html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; color: white; font-weight: bold; font-size: ${size*0.7}px;">P</div>`,
+    html: `<div style="background-color: ${color}; width: ${size}px; height: ${size}px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; color: white; font-weight: bold; font-size: ${size*0.7}px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">P</div>`,
     iconSize: [size, size],
     iconAnchor: [size/2, size/2],
     popupAnchor: [0, -size/2]
   });
 }
 
-// --- FUNÇÃO DO GPS (LOCAL ATUAL) ---
+// --- FUNÇÃO DO GPS ---
 function ativarGpsUsuario() {
   if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
       (position) => {
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
-
         userLocationLayer.clearLayers();
         L.marker([lat, lng], { icon: userIcon })
           .bindPopup("<b>Você está aqui</b>")
           .addTo(userLocationLayer);
       },
-      (error) => console.warn("Permissão de GPS negada ou indisponível."),
+      (error) => console.warn("Permissão de GPS indisponível."),
       { enableHighAccuracy: true }
     );
   }
 }
 
-// --- FUNÇÕES DE DADOS E DESENHO ---
+// --- FUNÇÕES DE DADOS ---
 async function fetchData(url) {
   try {
     const response = await fetch(url);
@@ -91,11 +93,9 @@ async function fetchData(url) {
 function extrairPontos(dados) {
   let lista = Array.isArray(dados) ? dados : (dados && Array.isArray(dados.entries) ? dados.entries : []);
   let pontos = [];
-  
   lista.forEach(item => {
     let lat = item.location_lat !== undefined ? item.location_lat : item.latitude;
     let lng = item.location_lng !== undefined ? item.location_lng : item.longitude;
-
     if (lat && lng) {
       pontos.push({ lat: parseFloat(lat), lng: parseFloat(lng), info: item });
     }
@@ -112,28 +112,39 @@ async function carregarMapa() {
   bikeLayer.clearLayers();
   parkingLayer.clearLayers();
 
-  // 1. DESENHANDO VEÍCULOS 
+  // 1. DESENHANDO VEÍCULOS (Apontando para bike.svg e scooter.svg)
   if (rawBikes) {
     const bikes = extrairPontos(rawBikes);
     bikes.forEach(b => {
-      let isBike = b.info.type && b.info.type.toLowerCase().includes('bike');
-      let iconToUse = isBike ? bikeIcon : scooterIcon; 
-      let veiculoType = isBike ? "Bicicleta" : "Patinete";
+      const info = b.info || {};
 
-      let bateriaRaw = b.info.battery_percent || 0;
+      // Filtros de status (Apenas Disponíveis)
+      if (info.ordered === true || info.booked === true || info.is_rented === true) return;
+      let statusText = String(info.status || info.status_name || info.state || '').toLowerCase();
+      if (statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus')) return;
+
+      let isBike = info.type && info.type.toLowerCase().includes('bike');
+      
+      let corIcone = isBike ? "#10b981" : "#f97316"; // Verde para Bike, Laranja para Patinete
+      let fileToUse = isBike ? "bike.svg" : "scooter.svg";
+      
+      let iconToUse = createVehicleIcon(corIcone, fileToUse);
+
+      let veiculoType = isBike ? "Bicicleta" : "Patinete";
+      let bateriaRaw = info.battery_percent || 0;
       let bateriaFormatada = Math.round((bateriaRaw <= 1 && bateriaRaw > 0) ? (bateriaRaw * 100) : bateriaRaw);
 
       L.marker([b.lat, b.lng], { icon: iconToUse })
-        .bindPopup(`<b>${veiculoType}:</b> ${b.info.identifier || 'N/A'}<br><b>Bateria:</b> ${bateriaFormatada}%`)
+        .bindPopup(`<b>${veiculoType}:</b> ${info.identifier || 'N/A'}<br><b>Bateria:</b> ${bateriaFormatada}%`)
         .addTo(bikeLayer);
     });
   }
 
-  // 2. DESENHANDO ESTACIONAMENTOS 
+  // 2. DESENHANDO ESTACIONAMENTOS
   if (rawParkings) {
     const parkings = extrairPontos(rawParkings);
     parkings.forEach(p => {
-      let cor = "#3b82f6"; // Azul padrão
+      let cor = "#3b82f6";
       let tamanho = 20;
       let atual = p.info.bikes_count || 0;
       
@@ -143,10 +154,9 @@ async function carregarMapa() {
       if (p.info.monitor === true) {
         tamanho = 26; 
         let proporcao = atual / capacidadeCalculo;
-
-        if (proporcao >= 0.8) cor = "#22c55e"; // Verde
-        else if (proporcao >= 0.4) cor = "#eab308"; // Amarelo
-        else cor = "#ef4444"; // Vermelho
+        if (proporcao >= 0.8) cor = "#22c55e";
+        else if (proporcao >= 0.4) cor = "#eab308";
+        else cor = "#ef4444";
       }
 
       L.marker([p.lat, p.lng], { icon: createParkingDivIcon(cor, tamanho) })
@@ -175,6 +185,6 @@ document.getElementById('toggleParking').addEventListener('click', (e) => {
 
 document.getElementById('refreshBtn').addEventListener('click', carregarMapa);
 
-// Inicia
+// Início
 ativarGpsUsuario();
 carregarMapa();
