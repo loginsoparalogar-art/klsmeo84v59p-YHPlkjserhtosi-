@@ -10,7 +10,7 @@ const map = L.map('map', {
   markerZoomAnimation: true
 }).setView([-9.6498, -35.7089], 13);
 
-// Camada OpenStreetMap padrão (Linhas de ruas fortes e nítidas para o dia)
+// Camada OpenStreetMap padrão (Linhas fortes para o dia)
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap contributors',
   updateWhenIdle: true,
@@ -26,15 +26,14 @@ let userLocationLayer = L.layerGroup().addTo(map);
 let showBikes = true;
 let showParking = true;
 
-// MODIFICAÇÃO: Removeu a tag <img> e passou a usar letras em alta definição (B e S)
+// RENDEREZAÇÃO: Ambos (B e S) agora usam a cor Laranja
 function createVehicleIcon(isBike) {
-  // Define as cores e letras solicitadas
-  const bgColor = isBike ? "#10b981" : "#f97316"; // Verde para Bike, Laranja para Scooter
+  const bgColor = "#f97316"; // Laranja unificado para Bike e Scooter
   const text = isBike ? "B" : "S";
 
   return L.divIcon({
-    className: 'vehicle-div-icon',
-    html: `<div style="background-color: ${bgColor}; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4); color: white; font-weight: 900; font-size: 15px; font-family: Arial, sans-serif; line-height: 1;">${text}</div>`,
+    className: 'vehicle-text-icon',
+    html: `<div style="background-color: ${bgColor} !important; background-image: none !important; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4); color: white !important; font-weight: 900; font-size: 15px; font-family: Arial, sans-serif; line-height: 1;">${text}</div>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
     popupAnchor: [0, -12]
@@ -49,18 +48,15 @@ const userIcon = L.divIcon({
   iconAnchor: [7, 7]
 });
 
-// REFORÇO VISUAL: Mantém o filtro que deixa as linhas das ruas e calçadas mais escuras no sol
+// Filtro CSS de alto contraste
 const style = document.createElement('style');
 style.innerHTML = `
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
-  
-  .leaflet-tile { 
-    filter: contrast(1.25) brightness(0.92) saturate(1.1) !important; 
-  }
+  .leaflet-tile { filter: contrast(1.25) brightness(0.92) saturate(1.1) !important; }
 `;
 document.head.appendChild(style);
 
-// Função para criar o ícone 'P' dos estacionamentos
+// Ícone 'P' dos estacionamentos
 function createParkingDivIcon(color, size = 20) {
   return L.divIcon({
     className: 'parking-div-icon', 
@@ -89,10 +85,11 @@ function ativarGpsUsuario() {
   }
 }
 
-// --- FUNÇÕES DE DADOS ---
+// --- OTIMIZAÇÃO: BUSCA ULTRA-RÁPIDA (Sem Cache) ---
 async function fetchData(url) {
   try {
-    const response = await fetch(url);
+    // A tag { cache: "no-store" } garante a recepção dos dados em tempo real, furando bloqueios de memória
+    const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
@@ -122,7 +119,7 @@ async function carregarMapa() {
   bikeLayer.clearLayers();
   parkingLayer.clearLayers();
 
-  // 1. DESENHANDO VEÍCULOS (Renderizando apenas texto B e S com CSS rápido)
+  // 1. DESENHANDO VEÍCULOS
   if (rawBikes) {
     const bikes = extrairPontos(rawBikes);
     bikes.forEach(b => {
@@ -133,8 +130,6 @@ async function carregarMapa() {
       if (statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus')) return;
 
       let isBike = info.type && info.type.toLowerCase().includes('bike');
-      
-      // Gera o ícone de texto puro de acordo com o tipo
       let iconToUse = createVehicleIcon(isBike);
 
       let veiculoType = isBike ? "Bicicleta" : "Patinete";
@@ -151,7 +146,7 @@ async function carregarMapa() {
   if (rawParkings) {
     const parkings = extrairPontos(rawParkings);
     parkings.forEach(p => {
-      let cor = "#3b82f6";
+      let col = "#3b82f6";
       let tamanho = 20;
       let atual = p.info.bikes_count || 0;
       
@@ -161,12 +156,12 @@ async function carregarMapa() {
       if (p.info.monitor === true) {
         tamanho = 26; 
         let proporcao = atual / capacidadeCalculo;
-        if (proporcao >= 0.8) cor = "#22c55e";
-        else if (proporcao >= 0.4) cor = "#eab308";
-        else cor = "#ef4444";
+        if (proporcao >= 0.8) col = "#22c55e";
+        else if (proporcao >= 0.4) col = "#eab308";
+        else col = "#ef4444";
       }
 
-      L.marker([p.lat, p.lng], { icon: createParkingDivIcon(cor, tamanho) })
+      L.marker([p.lat, p.lng], { icon: createParkingDivIcon(col, tamanho) })
         .bindPopup(`
           <b>${p.info.name || 'Ponto de Estacionamento'}</b><br>
           <b>Veículos aqui:</b> ${atual} / ${capacidadeReal}<br>
@@ -190,8 +185,16 @@ document.getElementById('toggleParking').addEventListener('click', (e) => {
   else { map.removeLayer(parkingLayer); e.target.classList.add('disabled'); e.target.innerText = "Estacionamentos (OFF)"; }
 });
 
-document.getElementById('refreshBtn').addEventListener('click', carregarMapa);
+document.getElementById('refreshBtn').addEventListener('click', () => {
+  // Feedback visual no botão
+  const btn = document.getElementById('refreshBtn');
+  btn.innerText = "Atualizando...";
+  carregarMapa().then(() => btn.innerText = "Atualizar 🔄");
+});
 
-// Início
+// --- INICIALIZAÇÃO E AUTO-ATUALIZAÇÃO ---
 ativarGpsUsuario();
 carregarMapa();
+
+// OTIMIZAÇÃO: Recarrega os dados sozinhos a cada 30 segundos (30000 milissegundos)
+setInterval(carregarMapa, 30000);
