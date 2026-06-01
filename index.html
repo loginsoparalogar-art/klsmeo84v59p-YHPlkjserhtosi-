@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Mapa GoJet</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  
+  <meta name="theme-color" content="#121214">
+  <link rel="manifest" href="manifest.json">
+  
+  <link rel="stylesheet" href="leaflet.css" />
+  <style>
+    /* 1. Força o HTML e o BODY a ocuparem 100% da largura e altura de qualquer tela */
+    html, body { 
+      margin: 0; 
+      padding: 0; 
+      width: 100%; 
+      height: 100%; 
+      background-color: #121214; 
+      color: #ffffff; 
+      font-family: Arial, sans-serif;
+      overflow: hidden; /* Remove barras de rolagem indesejadas */
+    }
+
+    /* 2. Organiza o título, o mapa e os botões verticalmente usando Flexbox */
+    body { 
+      display: flex; 
+      flex-direction: column; 
+      box-sizing: border-box; 
+      padding: 12px; 
+    }
+
+    h3 { 
+      margin-top: 0; 
+      margin-bottom: 12px; 
+      color: #00ff88; 
+      text-align: center; 
+    }
+
+    /* 3. O SEGREDO: flex: 1 faz o mapa expandir e preencher todo o espaço restante da tela */
+    #map { 
+      flex: 1; 
+      width: 100%; 
+      border-radius: 8px; 
+      margin-bottom: 12px; 
+      background-color: #333; 
+    }
+
+    .controls { 
+      display: flex; 
+      gap: 10px; 
+      justify-content: space-between; 
+    }
+
+    button { 
+      flex: 1; 
+      padding: 12px; 
+      border: none; 
+      border-radius: 4px; 
+      cursor: pointer; 
+      font-weight: bold; 
+      font-size: 14px; 
+      transition: opacity 0.2s; 
+    }
+
+    .btn-bike { background-color: #059669; color: white; }
+    .btn-parking { background-color: #3b82f6; color: white; }
+    .btn-refresh { background-color: #eab308; color: black; }
+    .disabled { opacity: 0.3; }
+
+    /* Mantém o estilo original dos círculos 'P' */
+    .parking-div-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 14px;
+      border-radius: 50%; 
+      border: 2px solid white; 
+      box-shadow: 0 0 5px rgba(0,0,0,0.5); 
+    }
+
+    /* === NOVO: ESTILO DO PONTO AZUL DO GPS === */
+    .user-location-icon {
+      background: none !important;
+      border: none !important;
+    }
+    
+    .gps-dot {
+      background-color: #007aff;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 0 12px #007aff, 0 0 4px #007aff;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); }
+      70% { box-shadow: 0 0 0 12px rgba(0, 122, 255, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); }
+    }
+  </style>
+</head>
+<body>
+
+  <h3>Painel de Monitoramento - Maceió</h3>
+  <div id="map"></div>
+  
+  <div class="controls">
+    <button id="toggleBikes" class="btn-bike">Veículos (ON)</button>
+    <button id="toggleParking" class="btn-parking">Estacionamentos (ON)</button>
+    <button id="refreshBtn" class="btn-refresh">Atualizar 🔄</button>
+  </div>
+
+  <script src="leaflet.js"></script>
+  <script src="app.js"></script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        try {
+          if (typeof map !== 'undefined') {
+            map.invalidateSize();
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }, 150);
+    });
+  </script>
+</body>
+</html>

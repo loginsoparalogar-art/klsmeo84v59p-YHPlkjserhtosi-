@@ -1,0 +1,20 @@
+{
+  "name": "Mapa GoJet Maceió",
+  "short_name": "GoJet",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#121214",
+  "theme_color": "#121214",
+  "icons": [
+    {
+      "src": "scooter_icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "scooter_icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
