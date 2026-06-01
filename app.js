@@ -26,7 +26,7 @@ let userLocationLayer = L.layerGroup().addTo(map);
 let showBikes = true;
 let showParking = true;
 
-// RENDEREZAÇÃO: Ambos (B e S) agora usam a cor Laranja
+// RENDEREZAÇÃO: Ambos (B e S) no círculo Laranja
 function createVehicleIcon(isBike) {
   const bgColor = "#f97316"; // Laranja unificado para Bike e Scooter
   const text = isBike ? "B" : "S";
@@ -88,7 +88,6 @@ function ativarGpsUsuario() {
 // --- OTIMIZAÇÃO: BUSCA ULTRA-RÁPIDA (Sem Cache) ---
 async function fetchData(url) {
   try {
-    // A tag { cache: "no-store" } garante a recepção dos dados em tempo real, furando bloqueios de memória
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return null;
     return await response.json();
@@ -125,9 +124,17 @@ async function carregarMapa() {
     bikes.forEach(b => {
       const info = b.info || {};
 
-      if (info.ordered === true || info.booked === true || info.is_rented === true) return;
+      // =================================================================
+      // BARREIRA DE BLOQUEIO ABSOLUTO (NÃO PLOTA NADA SE ESTIVER EM USO)
+      // =================================================================
       let statusText = String(info.status || info.status_name || info.state || '').toLowerCase();
-      if (statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus')) return;
+      let isEmUso = statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus');
+      
+      // Se tiver qualquer indício de que não está disponível, a execução para AQUI.
+      if (info.ordered === true || info.booked === true || info.is_rented === true || isEmUso) {
+        return; // Retorna vazio e pula o veículo. Não desenha círculo, nem letra.
+      }
+      // =================================================================
 
       let isBike = info.type && info.type.toLowerCase().includes('bike');
       let iconToUse = createVehicleIcon(isBike);
@@ -186,7 +193,6 @@ document.getElementById('toggleParking').addEventListener('click', (e) => {
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
-  // Feedback visual no botão
   const btn = document.getElementById('refreshBtn');
   btn.innerText = "Atualizando...";
   carregarMapa().then(() => btn.innerText = "Atualizar 🔄");
@@ -196,5 +202,5 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
 ativarGpsUsuario();
 carregarMapa();
 
-// OTIMIZAÇÃO: Recarrega os dados sozinhos a cada 30 segundos (30000 milissegundos)
+// Recarrega os dados em tempo real a cada 30 segundos
 setInterval(carregarMapa, 30000);
