@@ -124,17 +124,13 @@ async function carregarMapa() {
     bikes.forEach(b => {
       const info = b.info || {};
 
-      // =================================================================
-      // BARREIRA DE BLOQUEIO ABSOLUTO (NÃO PLOTA NADA SE ESTIVER EM USO)
-      // =================================================================
       let statusText = String(info.status || info.status_name || info.state || '').toLowerCase();
       let isEmUso = statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus');
       
-      // Se tiver qualquer indício de que não está disponível, a execução para AQUI.
+      // BARREIRA DE BLOQUEIO ABSOLUTO (NÃO PLOTA NADA SE ESTIVER EM USO)
       if (info.ordered === true || info.booked === true || info.is_rented === true || isEmUso) {
-        return; // Retorna vazio e pula o veículo. Não desenha círculo, nem letra.
+        return; 
       }
-      // =================================================================
 
       let isBike = info.type && info.type.toLowerCase().includes('bike');
       let iconToUse = createVehicleIcon(isBike);
@@ -156,19 +152,26 @@ async function carregarMapa() {
       let col = "#3b82f6";
       let tamanho = 20;
       let atual = p.info.bikes_count || 0;
+      let elevacao = 0; // Valor padrão: sem elevação
       
       let capacidadeReal = p.info.target_bikes_count || p.info.capacity || p.info.expected_bikes_count || '?';
       let capacidadeCalculo = (capacidadeReal !== '?' && capacidadeReal > 0) ? capacidadeReal : 1;
 
+      // APENAS OS MONITORES MUDAM DE TAMANHO, COR E FURAM A FILA DO MAPA
       if (p.info.monitor === true) {
         tamanho = 26; 
+        elevacao = 1000; // Coloca em evidência máxima no topo
+        
         let proporcao = atual / capacidadeCalculo;
         if (proporcao >= 0.8) col = "#22c55e";
         else if (proporcao >= 0.4) col = "#eab308";
         else col = "#ef4444";
       }
 
-      L.marker([p.lat, p.lng], { icon: createParkingDivIcon(col, tamanho) })
+      L.marker([p.lat, p.lng], { 
+        icon: createParkingDivIcon(col, tamanho),
+        zIndexOffset: elevacao // Aplica 1000 apenas aos monitores, e 0 aos pontos comuns
+      })
         .bindPopup(`
           <b>${p.info.name || 'Ponto de Estacionamento'}</b><br>
           <b>Veículos aqui:</b> ${atual} / ${capacidadeReal}<br>
