@@ -1,9 +1,10 @@
-// Configurações
+// Configurações e Proxy para evitar bloqueio CORS do GitHub Pages
 const CITY_ID = "66faae66cd18349215c90187";
-const BIKES_URL = `https://logistic.gojet.app/api/v0/urent/bikes/?city_id=${CITY_ID}&page=1&limit=1000`;
-const PARKING_URL = `https://logistic.gojet.app/api/v0/urent/parkings/?city_id=${CITY_ID}&page=1&limit=1000`;
+// O serviço corsproxy ajuda a enganar o bloqueio de segurança e permite ver a API
+const BIKES_URL = `https://corsproxy.io/?https://logistic.gojet.app/api/v0/urent/bikes/?city_id=${CITY_ID}&page=1&limit=1000`;
+const PARKING_URL = `https://corsproxy.io/?https://logistic.gojet.app/api/v0/urent/parkings/?city_id=${CITY_ID}&page=1&limit=1000`;
 
-// Inicializa o mapa com animações nativas ativas
+// Inicializa o mapa
 const map = L.map('map', {
   fadeAnimation: true,
   zoomAnimation: true,
@@ -12,13 +13,20 @@ const map = L.map('map', {
 
 // Camada OpenStreetMap padrão (Linhas fortes para o dia)
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors',
+  attribution: '© OpenStreetMap',
   updateWhenIdle: true,
   updateWhenZooming: false,
   keepBuffer: 2
 }).addTo(map);
 
-// Grupos para ligar/desligar
+// Filtro CSS de alto contraste para o sol
+const style = document.createElement('style');
+style.innerHTML = `
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
+  .leaflet-tile { filter: contrast(1.25) brightness(0.92) saturate(1.1) !important; }
+`;
+document.head.appendChild(style);
+
 let bikeLayer = L.layerGroup().addTo(map);
 let parkingLayer = L.layerGroup().addTo(map);
 let userLocationLayer = L.layerGroup().addTo(map);
@@ -26,9 +34,12 @@ let userLocationLayer = L.layerGroup().addTo(map);
 let showBikes = true;
 let showParking = true;
 
-// RENDEREZAÇÃO: Ambos (B e S) no círculo Laranja
+let userLat = null;
+let userLng = null;
+
+// Ícone Laranja unificado para Bike (B) e Scooter (S)
 function createVehicleIcon(isBike) {
-  const bgColor = "#f97316"; // Laranja unificado para Bike e Scooter
+  const bgColor = "#f97316"; 
   const text = isBike ? "B" : "S";
 
   return L.divIcon({
@@ -40,21 +51,13 @@ function createVehicleIcon(isBike) {
   });
 }
 
-// Ponto azul dinâmico para a localização do usuário (GPS)
+// Ponto azul do GPS
 const userIcon = L.divIcon({
   className: 'user-location-icon',
   html: `<div style="background-color: #007aff; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px #007aff; animation: pulse 2s infinite;"></div>`,
   iconSize: [14, 14],
   iconAnchor: [7, 7]
 });
-
-// Filtro CSS de alto contraste
-const style = document.createElement('style');
-style.innerHTML = `
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
-  .leaflet-tile { filter: contrast(1.25) brightness(0.92) saturate(1.1) !important; }
-`;
-document.head.appendChild(style);
 
 // Ícone 'P' dos estacionamentos
 function createParkingDivIcon(color, size = 20) {
@@ -72,26 +75,27 @@ function ativarGpsUsuario() {
   if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
       (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
+        userLat = position.coords.latitude;
+        userLng = position.coords.longitude;
         userLocationLayer.clearLayers();
-        L.marker([lat, lng], { icon: userIcon })
+        L.marker([userLat, userLng], { icon: userIcon })
           .bindPopup("<b>Você está aqui</b>")
           .addTo(userLocationLayer);
       },
-      (error) => console.warn("Permissão de GPS indisponível."),
+      (error) => console.warn("Permissão de GPS bloqueada no navegador."),
       { enableHighAccuracy: true }
     );
   }
 }
 
-// --- OTIMIZAÇÃO: BUSCA ULTRA-RÁPIDA (Sem Cache) ---
+// Busca de Dados
 async function fetchData(url) {
   try {
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
+    console.error("Erro ao buscar dados:", error);
     return null;
   }
 }
@@ -109,6 +113,7 @@ function extrairPontos(dados) {
   return pontos;
 }
 
+// Carregar Mapa
 async function carregarMapa() {
   const [rawBikes, rawParkings] = await Promise.all([
     fetchData(BIKES_URL),
@@ -118,7 +123,7 @@ async function carregarMapa() {
   bikeLayer.clearLayers();
   parkingLayer.clearLayers();
 
-  // 1. DESENHANDO VEÍCULOS
+  // 1. VEÍCULOS
   if (rawBikes) {
     const bikes = extrairPontos(rawBikes);
     bikes.forEach(b => {
@@ -127,7 +132,7 @@ async function carregarMapa() {
       let statusText = String(info.status || info.status_name || info.state || '').toLowerCase();
       let isEmUso = statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus');
       
-      // BARREIRA DE BLOQUEIO ABSOLUTO (NÃO PLOTA NADA SE ESTIVER EM USO)
+      // BLOQUEIO TOTAL: Não plota se estiver em uso ou indisponível
       if (info.ordered === true || info.booked === true || info.is_rented === true || isEmUso) {
         return; 
       }
@@ -145,22 +150,22 @@ async function carregarMapa() {
     });
   }
 
-  // 2. DESENHANDO ESTACIONAMENTOS
+  // 2. ESTACIONAMENTOS
   if (rawParkings) {
     const parkings = extrairPontos(rawParkings);
     parkings.forEach(p => {
       let col = "#3b82f6";
       let tamanho = 20;
       let atual = p.info.bikes_count || 0;
-      let elevacao = 0; // Valor padrão: sem elevação
+      let elevacao = 0; 
       
       let capacidadeReal = p.info.target_bikes_count || p.info.capacity || p.info.expected_bikes_count || '?';
       let capacidadeCalculo = (capacidadeReal !== '?' && capacidadeReal > 0) ? capacidadeReal : 1;
 
-      // APENAS OS MONITORES MUDAM DE TAMANHO, COR E FURAM A FILA DO MAPA
+      // APENAS OS MONITORES MUDAM DE TAMANHO E FURAM A FILA DO MAPA (zIndex: 1000)
       if (p.info.monitor === true) {
         tamanho = 26; 
-        elevacao = 1000; // Coloca em evidência máxima no topo
+        elevacao = 1000; 
         
         let proporcao = atual / capacidadeCalculo;
         if (proporcao >= 0.8) col = "#22c55e";
@@ -170,7 +175,7 @@ async function carregarMapa() {
 
       L.marker([p.lat, p.lng], { 
         icon: createParkingDivIcon(col, tamanho),
-        zIndexOffset: elevacao // Aplica 1000 apenas aos monitores, e 0 aos pontos comuns
+        zIndexOffset: elevacao
       })
         .bindPopup(`
           <b>${p.info.name || 'Ponto de Estacionamento'}</b><br>
@@ -191,19 +196,25 @@ document.getElementById('toggleBikes').addEventListener('click', (e) => {
 
 document.getElementById('toggleParking').addEventListener('click', (e) => {
   showParking = !showParking;
-  if (showParking) { map.addLayer(parkingLayer); e.target.classList.remove('disabled'); e.target.innerText = "Estacionamentos (ON)"; }
-  else { map.removeLayer(parkingLayer); e.target.classList.add('disabled'); e.target.innerText = "Estacionamentos (OFF)"; }
+  if (showParking) { map.addLayer(parkingLayer); e.target.classList.remove('disabled'); e.target.innerText = "Pontos (ON)"; }
+  else { map.removeLayer(parkingLayer); e.target.classList.add('disabled'); e.target.innerText = "Pontos (OFF)"; }
 });
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
   const btn = document.getElementById('refreshBtn');
   btn.innerText = "Atualizando...";
-  carregarMapa().then(() => btn.innerText = "Atualizar 🔄");
+  carregarMapa().then(() => btn.innerText = "Atualizar Mapa 🔄");
 });
 
-// --- INICIALIZAÇÃO E AUTO-ATUALIZAÇÃO ---
+document.getElementById('btnMeuLocal').addEventListener('click', () => {
+  if (userLat !== null && userLng !== null) {
+    map.flyTo([userLat, userLng], 16, { animate: true, duration: 1.5 });
+  } else {
+    alert("Aguarde o sinal de GPS ou verifique se você permitiu o uso da localização!");
+  }
+});
+
+// Inicialização
 ativarGpsUsuario();
 carregarMapa();
-
-// Recarrega os dados em tempo real a cada 30 segundos
 setInterval(carregarMapa, 30000);
