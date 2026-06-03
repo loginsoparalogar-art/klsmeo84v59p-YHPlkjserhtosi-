@@ -3,16 +3,15 @@ const CITY_ID = "66faae66cd18349215c90187";
 const BASE_BIKES_URL = `https://logistic.gojet.app/api/v0/urent/bikes/?city_id=${CITY_ID}&page=1&limit=1000`;
 const BASE_PARKING_URL = `https://logistic.gojet.app/api/v0/urent/parkings/?city_id=${CITY_ID}&page=1&limit=1000`;
 
-// Dicionários na memória para rastreamento em tempo real (Evita o efeito pisca-pisca)
+// Memória para rastreamento suave
 let activeBikeMarkers = {};
 let activeParkingMarkers = {};
 
-// Inicializa o mapa Leaflet com configurações de alta performance
 const map = L.map('map', {
-  fadeAnimation: false,      // Desativado para atualizações instantâneas
+  fadeAnimation: false,
   zoomAnimation: true,
   markerZoomAnimation: true,
-  preferCanvas: true         // Força o Android a renderizar usando aceleração de hardware
+  preferCanvas: true
 }).setView([-9.6498, -35.7089], 14);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -21,7 +20,6 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   keepBuffer: 3
 }).addTo(map);
 
-// Filtro de contraste otimizado para o dia a dia na rua
 const style = document.createElement('style');
 style.innerHTML = `
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
@@ -38,7 +36,6 @@ let showParking = true;
 let userLat = null;
 let userLng = null;
 
-// Geradores de Ícones
 function createVehicleIcon(isBike) {
   const text = isBike ? "B" : "S";
   return L.divIcon({
@@ -67,7 +64,6 @@ const userIcon = L.divIcon({
   iconAnchor: [7, 7]
 });
 
-// GPS do Usuário
 function ativarGpsUsuario() {
   if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
@@ -83,28 +79,42 @@ function ativarGpsUsuario() {
   }
 }
 
-// Fetch com destruição agressiva de cache e Timeout de segurança de 4 segundos
-async function fetchDataBotStyle(urlBase) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000); // Cancela se a rede travar
+// =====================================================================
+// SISTEMA BLINDADO: DUPLO PROXY COM CANCELAMENTO AUTOMÁTICO (TIMEOUT)
+// =====================================================================
+async function fetchComFallback(urlBase) {
+  // Cria uma URL única para destruir o cache do celular
+  const urlAlvo = `${urlBase}&_bot=${Date.now()}`;
+  
+  // Lista de proxies (Se o primeiro falhar, ele tenta o segundo na mesma hora)
+  const proxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(urlAlvo)}`,
+    `https://corsproxy.io/?${encodeURIComponent(urlAlvo)}`
+  ];
 
-  try {
-    const urlDestroiCache = `${urlBase}&_bot=${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    const urlComProxy = `https://corsproxy.io/?${urlDestroiCache}`;
+  for (let proxy of proxies) {
+    try {
+      const controller = new AbortController();
+      // Se o proxy demorar mais de 5 segundos, aborta a missão e tenta o próximo!
+      const timeoutId = setTimeout(() => controller.abort(), 5000); 
 
-    const response = await fetch(urlComProxy, { 
-      method: "GET",
-      signal: controller.signal,
-      headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
-    });
-    clearTimeout(timeoutId);
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (error) {
-    clearTimeout(timeoutId);
-    console.error("Link lento ou bloqueado, pulando ciclo.");
-    return null;
+      const response = await fetch(proxy, { 
+        method: "GET", 
+        signal: controller.signal,
+        cache: "no-store" 
+      });
+      
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const json = await response.json();
+        if (json) return json; // Retorna os dados com sucesso
+      }
+    } catch (erro) {
+      console.warn("Proxy falhou ou demorou muito, tentando o plano B...", proxy);
+    }
   }
+  return null; // Retorna nulo apenas se TODOS os proxies falharem
 }
 
 function extrairPontos(dados) {
@@ -127,117 +137,113 @@ function extrairPontos(dados) {
   return pontos;
 }
 
-// Sistema de Sincronização Inteligente (Igual ao Bot do Telegram)
+// =====================================================================
+// MOTOR DE SINCRONIZAÇÃO AO VIVO
+// =====================================================================
 async function sincronizarDadosAoVivo() {
-  const [rawBikes, rawParkings] = await Promise.all([
-    fetchDataBotStyle(BASE_BIKES_URL),
-    fetchDataBotStyle(BASE_PARKING_URL)
-  ]);
+  try {
+    const statusText = document.getElementById('lastUpdate');
+    
+    const [rawBikes, rawParkings] = await Promise.all([
+      fetchComFallback(BASE_BIKES_URL),
+      fetchComFallback(BASE_PARKING_URL)
+    ]);
 
-  if (!rawBikes && !rawParkings) {
-    document.getElementById('lastUpdate').innerText = "⚡ Mantendo dados anteriores (Sinal oscilando)...";
-    return; // Não limpa nada, mantém o mapa com os últimos dados válidos
-  }
+    // Se ambos os proxies falharem (internet caiu ou proxies congestionados)
+    if (!rawBikes && !rawParkings) {
+      statusText.innerText = "⚠️ Proxies congestionados. Tentando novamente...";
+      return; 
+    }
 
-  // --- 1. ATUALIZAR VEÍCULOS ---
-  if (rawBikes) {
-    const bikes = extrairPontos(rawBikes);
-    let IDsEncontradosAgora = new Set();
+    // --- 1. VEÍCULOS ---
+    if (rawBikes) {
+      const bikes = extrairPontos(rawBikes);
+      let IDsEncontradosAgora = new Set();
 
-    bikes.forEach(b => {
-      const info = b.info || {};
-      let statusText = String(info.status || info.status_name || info.state || '').toLowerCase();
-      let isEmUso = statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus');
-      
-      // Filtros de segurança solicitados
-      if (info.ordered === true || info.booked === true || info.is_rented === true || isEmUso) {
-        return; 
-      }
-
-      let idUnico = info.id || info.identifier || `${b.lat}_${b.lng}`;
-      IDsEncontradosAgora.add(idUnico);
-
-      let isBike = info.type && String(info.type).toLowerCase().includes('bike');
-      let bateriaRaw = info.battery_percent || 0;
-      let bateriaFormatada = Math.round((bateriaRaw <= 1 && bateriaRaw > 0) ? (bateriaRaw * 100) : bateriaRaw);
-      let textoPopup = `<b>${isBike ? "Bicicleta" : "Patinete"}:</b> ${info.identifier || 'N/A'}<br><b>Bateria:</b> ${bateriaFormatada}%`;
-
-      // Se o marcador já existe na tela, só atualiza a posição e o texto (Sem recriar!)
-      if (activeBikeMarkers[idUnico]) {
-        activeBikeMarkers[idUnico].setLatLng([b.lat, b.lng]);
-        activeBikeMarkers[idUnico].setPopupContent(textoPopup);
-      } else {
-        // Se for novo, adiciona
-        let novoMarcador = L.marker([b.lat, b.lng], { icon: createVehicleIcon(isBike) })
-          .bindPopup(textoPopup);
+      bikes.forEach(b => {
+        const info = b.info || {};
+        let st = String(info.status || info.status_name || info.state || '').toLowerCase();
+        let isEmUso = st.includes('uso') || st.includes('rid') || st.includes('rent') || st.includes('bus');
         
-        if (showBikes) novoMarcador.addTo(bikeLayer);
-        activeBikeMarkers[idUnico] = novoMarcador;
-      }
-    });
+        if (info.ordered === true || info.booked === true || info.is_rented === true || isEmUso) return; 
 
-    // Remove do mapa os patinetes que sumiram da API (Foram alugados ou sumiram)
-    for (let id in activeBikeMarkers) {
-      if (!IDsEncontradosAgora.has(id)) {
-        bikeLayer.removeLayer(activeBikeMarkers[id]);
-        delete activeBikeMarkers[id];
-      }
-    }
-  }
+        let idUnico = info.id || info.identifier || `${b.lat}_${b.lng}`;
+        IDsEncontradosAgora.add(idUnico);
 
-  // --- 2. ATUALIZAR ESTACIONALMENTOS ---
-  if (rawParkings) {
-    const parkings = extrairPontos(rawParkings);
-    let IDsEstacionamentosAgora = new Set();
+        let isBike = info.type && String(info.type).toLowerCase().includes('bike');
+        let bateriaRaw = info.battery_percent || 0;
+        let bateriaFormatada = Math.round((bateriaRaw <= 1 && bateriaRaw > 0) ? (bateriaRaw * 100) : bateriaRaw);
+        let txtPopup = `<b>${isBike ? "Bicicleta" : "Patinete"}:</b> ${info.identifier || 'N/A'}<br><b>Bateria:</b> ${bateriaFormatada}%`;
 
-    parkings.forEach(p => {
-      let idUnico = p.info.id || p.info.name || `${p.lat}_${p.lng}`;
-      IDsEstacionamentosAgora.add(idUnico);
+        if (activeBikeMarkers[idUnico]) {
+          activeBikeMarkers[idUnico].setLatLng([b.lat, b.lng]);
+          activeBikeMarkers[idUnico].setPopupContent(txtPopup);
+        } else {
+          let marcador = L.marker([b.lat, b.lng], { icon: createVehicleIcon(isBike) }).bindPopup(txtPopup);
+          if (showBikes) marcador.addTo(bikeLayer);
+          activeBikeMarkers[idUnico] = marcador;
+        }
+      });
 
-      let col = "#3b82f6";
-      let tamanho = 20;
-      let atual = p.info.bikes_count || 0;
-      let elevacao = 0; 
-      
-      let capacidadeReal = p.info.target_bikes_count || p.info.capacity || p.info.expected_bikes_count || '?';
-      let capacidadeCalculo = (capacidadeReal !== '?' && capacidadeReal > 0) ? capacidadeReal : 1;
-
-      if (p.info.monitor === true) {
-        tamanho = 26; 
-        elevacao = 1000; 
-        let proporcao = atual / capacidadeCalculo;
-        if (proporcao >= 0.8) col = "#22c55e";
-        else if (proporcao >= 0.4) col = "#eab308";
-        else col = "#ef4444";
-      }
-
-      let textoPopup = `<b>${p.info.name || 'Ponto'}</b><br>Veículos: ${atual} / ${capacidadeReal}<br>Monitor: ${p.info.monitor ? 'Sim' : 'Não'}`;
-
-      if (activeParkingMarkers[idUnico]) {
-        activeParkingMarkers[idUnico].setLatLng([p.lat, p.lng]);
-        activeParkingMarkers[idUnico].setIcon(createParkingDivIcon(col, tamanho));
-        activeParkingMarkers[idUnico].setPopupContent(textoPopup);
-      } else {
-        let novoMarcador = L.marker([p.lat, p.lng], { 
-          icon: createParkingDivIcon(col, tamanho),
-          zIndexOffset: elevacao
-        }).bindPopup(textoPopup);
-
-        if (showParking) novoMarcador.addTo(parkingLayer);
-        activeParkingMarkers[idUnico] = novoMarcador;
-      }
-    });
-
-    for (let id in activeParkingMarkers) {
-      if (!IDsEstacionamentosAgora.has(id)) {
-        parkingLayer.removeLayer(activeParkingMarkers[id]);
-        delete activeParkingMarkers[id];
+      for (let id in activeBikeMarkers) {
+        if (!IDsEncontradosAgora.has(id)) {
+          bikeLayer.removeLayer(activeBikeMarkers[id]);
+          delete activeBikeMarkers[id];
+        }
       }
     }
-  }
 
-  const agora = new Date();
-  document.getElementById('lastUpdate').innerText = `⚡ BOT TEMPO REAL • Sincronizado às ${agora.toLocaleTimeString('pt-BR')}`;
+    // --- 2. ESTACIONAMENTOS ---
+    if (rawParkings) {
+      const parkings = extrairPontos(rawParkings);
+      let IDsEstacionamentosAgora = new Set();
+
+      parkings.forEach(p => {
+        let idUnico = p.info.id || p.info.name || `${p.lat}_${p.lng}`;
+        IDsEstacionamentosAgora.add(idUnico);
+
+        let col = "#3b82f6";
+        let tamanho = 20;
+        let atual = p.info.bikes_count || 0;
+        let elevacao = 0; 
+        let capReal = p.info.target_bikes_count || p.info.capacity || p.info.expected_bikes_count || '?';
+        let capCalc = (capReal !== '?' && capReal > 0) ? capReal : 1;
+
+        if (p.info.monitor === true) {
+          tamanho = 26; elevacao = 1000; 
+          let proporcao = atual / capCalc;
+          if (proporcao >= 0.8) col = "#22c55e";
+          else if (proporcao >= 0.4) col = "#eab308";
+          else col = "#ef4444";
+        }
+
+        let txtPopup = `<b>${p.info.name || 'Ponto'}</b><br>Veículos: ${atual} / ${capReal}<br>Monitor: ${p.info.monitor ? 'Sim' : 'Não'}`;
+
+        if (activeParkingMarkers[idUnico]) {
+          activeParkingMarkers[idUnico].setLatLng([p.lat, p.lng]);
+          activeParkingMarkers[idUnico].setIcon(createParkingDivIcon(col, tamanho));
+          activeParkingMarkers[idUnico].setPopupContent(txtPopup);
+        } else {
+          let marcador = L.marker([p.lat, p.lng], { icon: createParkingDivIcon(col, tamanho), zIndexOffset: elevacao }).bindPopup(txtPopup);
+          if (showParking) marcador.addTo(parkingLayer);
+          activeParkingMarkers[idUnico] = marcador;
+        }
+      });
+
+      for (let id in activeParkingMarkers) {
+        if (!IDsEstacionamentosAgora.has(id)) {
+          parkingLayer.removeLayer(activeParkingMarkers[id]);
+          delete activeParkingMarkers[id];
+        }
+      }
+    }
+
+    const agora = new Date();
+    statusText.innerText = `⚡ BOT TEMPO REAL • Sincronizado às ${agora.toLocaleTimeString('pt-BR')}`;
+
+  } catch (erroGeral) {
+    document.getElementById('lastUpdate').innerText = "❌ Erro no script: " + erroGeral.message;
+  }
 }
 
 // --- CONTROLES DA INTERFACE ---
@@ -265,8 +271,8 @@ document.getElementById('toggleParking').addEventListener('click', (e) => {
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
   const btn = document.getElementById('refreshBtn');
-  btn.innerText = "Forçando Sincronia...";
-  sincronizarDadosAoVivo().then(() => btn.innerText = "Atualizar Mapa 🔄");
+  btn.innerText = "Sincronizando...";
+  sincronizarDadosAoVivo().then(() => btn.innerText = "Atualizar Agora 🔄");
 });
 
 document.getElementById('btnMeuLocal').addEventListener('click', () => {
@@ -277,7 +283,7 @@ document.getElementById('btnMeuLocal').addEventListener('click', () => {
   }
 });
 
-// Inicialização imediata e Loop ultra veloz de 10 segundos (Ritmo de Bot)
+// Inicialização e Loop
 ativarGpsUsuario();
 sincronizarDadosAoVivo();
 setInterval(sincronizarDadosAoVivo, 10000);
