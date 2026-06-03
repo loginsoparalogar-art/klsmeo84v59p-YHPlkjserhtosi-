@@ -1,17 +1,17 @@
-// Configurações e Proxy para evitar bloqueio CORS do GitHub Pages
 const CITY_ID = "66faae66cd18349215c90187";
-// O serviço corsproxy ajuda a enganar o bloqueio de segurança e permite ver a API
-const BIKES_URL = `https://corsproxy.io/?https://logistic.gojet.app/api/v0/urent/bikes/?city_id=${CITY_ID}&page=1&limit=1000`;
-const PARKING_URL = `https://corsproxy.io/?https://logistic.gojet.app/api/v0/urent/parkings/?city_id=${CITY_ID}&page=1&limit=1000`;
 
-// Inicializa o mapa
+// URLs limpas da API (O proxy e o destruidor de cache serão aplicados dinamicamente no Fetch)
+const BASE_BIKES_URL = `https://logistic.gojet.app/api/v0/urent/bikes/?city_id=${CITY_ID}&page=1&limit=1000`;
+const BASE_PARKING_URL = `https://logistic.gojet.app/api/v0/urent/parkings/?city_id=${CITY_ID}&page=1&limit=1000`;
+
+// Inicializa o mapa Leaflet
 const map = L.map('map', {
   fadeAnimation: true,
   zoomAnimation: true,
   markerZoomAnimation: true
 }).setView([-9.6498, -35.7089], 13);
 
-// Camada OpenStreetMap padrão (Linhas fortes para o dia)
+// Camada OpenStreetMap padrão
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap',
   updateWhenIdle: true,
@@ -19,7 +19,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   keepBuffer: 2
 }).addTo(map);
 
-// Filtro CSS de alto contraste para o sol
+// Filtro de alto contraste
 const style = document.createElement('style');
 style.innerHTML = `
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
@@ -33,15 +33,12 @@ let userLocationLayer = L.layerGroup().addTo(map);
 
 let showBikes = true;
 let showParking = true;
-
 let userLat = null;
 let userLng = null;
 
-// Ícone Laranja unificado para Bike (B) e Scooter (S)
 function createVehicleIcon(isBike) {
   const bgColor = "#f97316"; 
   const text = isBike ? "B" : "S";
-
   return L.divIcon({
     className: 'vehicle-text-icon',
     html: `<div style="background-color: ${bgColor} !important; background-image: none !important; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4); color: white !important; font-weight: 900; font-size: 15px; font-family: Arial, sans-serif; line-height: 1;">${text}</div>`,
@@ -51,7 +48,6 @@ function createVehicleIcon(isBike) {
   });
 }
 
-// Ponto azul do GPS
 const userIcon = L.divIcon({
   className: 'user-location-icon',
   html: `<div style="background-color: #007aff; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px #007aff; animation: pulse 2s infinite;"></div>`,
@@ -59,7 +55,6 @@ const userIcon = L.divIcon({
   iconAnchor: [7, 7]
 });
 
-// Ícone 'P' dos estacionamentos
 function createParkingDivIcon(color, size = 20) {
   return L.divIcon({
     className: 'parking-div-icon', 
@@ -70,7 +65,6 @@ function createParkingDivIcon(color, size = 20) {
   });
 }
 
-// --- FUNÇÃO DO GPS ---
 function ativarGpsUsuario() {
   if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
@@ -82,20 +76,28 @@ function ativarGpsUsuario() {
           .bindPopup("<b>Você está aqui</b>")
           .addTo(userLocationLayer);
       },
-      (error) => console.warn("Permissão de GPS bloqueada no navegador."),
+      (error) => console.warn("GPS Indisponível ou bloqueado."),
       { enableHighAccuracy: true }
     );
   }
 }
 
-// Busca de Dados
-async function fetchData(url) {
+// --- EXPLODIDOR DE CACHE INTEGRADO (O SEGREDO DO REAL-TIME) ---
+async function fetchDataAoVivo(urlBase) {
   try {
-    const response = await fetch(url, { cache: "no-store" });
+    // Injeta um código de tempo único gerado no exato milissegundo do disparo da função
+    const urlDestroiCache = `${urlBase}&_nocache=${Date.now()}`;
+    const urlComProxy = `https://corsproxy.io/?${encodeURIComponent(urlDestroiCache)}`;
+
+    const response = await fetch(urlComProxy, { 
+      method: "GET",
+      cache: "no-store", // Força o navegador Android a rejeitar caches locais
+      headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
+    });
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
-    console.error("Erro ao buscar dados:", error);
+    console.error("Erro na busca viva:", error);
     return null;
   }
 }
@@ -113,33 +115,30 @@ function extrairPontos(dados) {
   return pontos;
 }
 
-// Carregar Mapa
+// Carregar e redesenhar dados limpos
 async function carregarMapa() {
   const [rawBikes, rawParkings] = await Promise.all([
-    fetchData(BIKES_URL),
-    fetchData(PARKING_URL)
+    fetchDataAoVivo(BASE_BIKES_URL),
+    fetchDataAoVivo(BASE_PARKING_URL)
   ]);
 
   bikeLayer.clearLayers();
   parkingLayer.clearLayers();
 
-  // 1. VEÍCULOS
+  // 1. PROCESSAR VEÍCULOS
   if (rawBikes) {
     const bikes = extrairPontos(rawBikes);
     bikes.forEach(b => {
       const info = b.info || {};
-
       let statusText = String(info.status || info.status_name || info.state || '').toLowerCase();
       let isEmUso = statusText.includes('uso') || statusText.includes('rid') || statusText.includes('rent') || statusText.includes('bus');
       
-      // BLOQUEIO TOTAL: Não plota se estiver em uso ou indisponível
       if (info.ordered === true || info.booked === true || info.is_rented === true || isEmUso) {
         return; 
       }
 
       let isBike = info.type && info.type.toLowerCase().includes('bike');
       let iconToUse = createVehicleIcon(isBike);
-
       let veiculoType = isBike ? "Bicicleta" : "Patinete";
       let bateriaRaw = info.battery_percent || 0;
       let bateriaFormatada = Math.round((bateriaRaw <= 1 && bateriaRaw > 0) ? (bateriaRaw * 100) : bateriaRaw);
@@ -150,7 +149,7 @@ async function carregarMapa() {
     });
   }
 
-  // 2. ESTACIONAMENTOS
+  // 2. PROCESSAR ESTACIONAMENTOS
   if (rawParkings) {
     const parkings = extrairPontos(rawParkings);
     parkings.forEach(p => {
@@ -162,11 +161,9 @@ async function carregarMapa() {
       let capacidadeReal = p.info.target_bikes_count || p.info.capacity || p.info.expected_bikes_count || '?';
       let capacidadeCalculo = (capacidadeReal !== '?' && capacidadeReal > 0) ? capacidadeReal : 1;
 
-      // APENAS OS MONITORES MUDAM DE TAMANHO E FURAM A FILA DO MAPA (zIndex: 1000)
       if (p.info.monitor === true) {
         tamanho = 26; 
-        elevacao = 1000; 
-        
+        elevacao = 1000; // Pontos monitores em evidência máxima no topo
         let proporcao = atual / capacidadeCalculo;
         if (proporcao >= 0.8) col = "#22c55e";
         else if (proporcao >= 0.4) col = "#eab308";
@@ -185,9 +182,13 @@ async function carregarMapa() {
         .addTo(parkingLayer);
     });
   }
+
+  // Atualiza o relógio do Bot na tela
+  const agora = new Date();
+  document.getElementById('lastUpdate').innerText = `⚡ AO VIVO • Atualizado às ${agora.toLocaleTimeString('pt-BR')}`;
 }
 
-// --- CONTROLES ---
+// --- EVENTOS DE CONTROLE ---
 document.getElementById('toggleBikes').addEventListener('click', (e) => {
   showBikes = !showBikes;
   if (showBikes) { map.addLayer(bikeLayer); e.target.classList.remove('disabled'); e.target.innerText = "Veículos (ON)"; }
@@ -202,19 +203,19 @@ document.getElementById('toggleParking').addEventListener('click', (e) => {
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
   const btn = document.getElementById('refreshBtn');
-  btn.innerText = "Atualizando...";
-  carregarMapa().then(() => btn.innerText = "Atualizar Mapa 🔄");
+  btn.innerText = "Buscando dados...";
+  carregarMapa().then(() => btn.innerText = "Atualizar Agora 🔄");
 });
 
 document.getElementById('btnMeuLocal').addEventListener('click', () => {
   if (userLat !== null && userLng !== null) {
-    map.flyTo([userLat, userLng], 16, { animate: true, duration: 1.5 });
+    map.flyTo([userLat, userLng], 16, { animate: true, duration: 1.2 });
   } else {
-    alert("Aguarde o sinal de GPS ou verifique se você permitiu o uso da localização!");
+    alert("Buscando sinal do GPS... Verifique se a localização do seu Android está ligada.");
   }
 });
 
-// Inicialização
+// Inicialização e loop contínuo de 15 segundos
 ativarGpsUsuario();
 carregarMapa();
-setInterval(carregarMapa, 30000);
+setInterval(carregarMapa, 15000);
