@@ -1,7 +1,7 @@
 {
   "name": "Mapa GoJet Maceió",
   "short_name": "GoJet",
-  "description": "Painel de monitoramento de veículos e estacionamentos.",
+  "description": "Painel de monitoramento de veículos e estacionamentos em tempo real.",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#121214",
