@@ -3,7 +3,6 @@ const CITY_ID = "66faae66cd18349215c90187";
 const BASE_BIKES_URL = `https://logistic.gojet.app/api/v0/urent/bikes/?city_id=${CITY_ID}&page=1&limit=1000`;
 const BASE_PARKING_URL = `https://logistic.gojet.app/api/v0/urent/parkings/?city_id=${CITY_ID}&page=1&limit=1000`;
 
-// Memória para rastreamento suave
 let activeBikeMarkers = {};
 let activeParkingMarkers = {};
 
@@ -80,42 +79,58 @@ function ativarGpsUsuario() {
 }
 
 // =====================================================================
-// SISTEMA BLINDADO: ROLETA COM 3 PROXIES PARA EVITAR CONGESTIONAMENTO
+// SISTEMA TURBO: CORRIDA SIMULTÂNEA DE PROXIES (PROMISE.ANY)
 // =====================================================================
 async function fetchComFallback(urlBase) {
   const urlAlvo = `${urlBase}&_bot=${Date.now()}`;
   const urlCodificada = encodeURIComponent(urlAlvo);
   
-  // Agora temos 3 opções de rotas diferentes.
   const proxies = [
     `https://api.codetabs.com/v1/proxy?quest=${urlCodificada}`,
     `https://api.allorigins.win/raw?url=${urlCodificada}`,
     `https://corsproxy.io/?${urlCodificada}`
   ];
 
-  for (let proxy of proxies) {
-    try {
+  // Em vez de esperar um falhar para tentar o outro, dispara todos de uma vez!
+  const promessas = proxies.map(proxy => {
+    return new Promise(async (resolve, reject) => {
       const controller = new AbortController();
-      // Tolerância de 5 segundos. Se o proxy não responder, ele aborta e vai pro próximo.
-      const timeoutId = setTimeout(() => controller.abort(), 5000); 
+      // Dá 6 segundos de prazo máximo para quem for tentar
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        reject(new Error("Proxy lento"));
+      }, 6000); 
 
-      const response = await fetch(proxy, { 
-        method: "GET", 
-        signal: controller.signal,
-        cache: "no-store" 
-      });
-      
-      clearTimeout(timeoutId);
+      try {
+        const response = await fetch(proxy, { 
+          method: "GET", 
+          signal: controller.signal,
+          cache: "no-store" 
+        });
+        clearTimeout(timeoutId);
 
-      if (response.ok) {
-        const json = await response.json();
-        if (json) return json; 
+        if (response.ok) {
+          const json = await response.json();
+          if (json) resolve(json); // O primeiro que resolver GANHA a corrida!
+          else reject(new Error("Vazio"));
+        } else {
+          reject(new Error("Erro HTTP"));
+        }
+      } catch (erro) {
+        clearTimeout(timeoutId);
+        reject(erro); // Perdeu a corrida
       }
-    } catch (erro) {
-      console.warn("Proxy falhou ou muito lento, rotacionando...", proxy);
-    }
+    });
+  });
+
+  try {
+    // Retorna instantaneamente a resposta do proxy mais rápido
+    return await Promise.any(promessas);
+  } catch (todosErraram) {
+    // Só cai aqui se a internet cair ou se OS TRÊS proxies falharem ao mesmo tempo
+    console.warn("Todos os proxies falharam nesta tentativa.");
+    return null;
   }
-  return null; 
 }
 
 function extrairPontos(dados) {
@@ -145,13 +160,14 @@ async function sincronizarDadosAoVivo() {
   try {
     const statusText = document.getElementById('lastUpdate');
     
+    // Inicia a corrida para buscar bikes e estacionamentos simultaneamente
     const [rawBikes, rawParkings] = await Promise.all([
       fetchComFallback(BASE_BIKES_URL),
       fetchComFallback(BASE_PARKING_URL)
     ]);
 
     if (!rawBikes && !rawParkings) {
-      statusText.innerText = "⚠️ Tráfego intenso (Proxies lentos). Retentando...";
+      statusText.innerText = "⚠️ Tráfego intenso. Tentando no próximo ciclo...";
       return; 
     }
 
@@ -254,20 +270,20 @@ let loopDeSincronizacao;
 function iniciarLoop() {
   if (loopDeSincronizacao) clearInterval(loopDeSincronizacao);
   
-  document.getElementById('lastUpdate').innerText = "🔄 Retomando conexão...";
-  sincronizarDadosAoVivo(); // Dispara imediatamente
+  document.getElementById('lastUpdate').innerText = "⚡ Buscando dados instantaneamente...";
+  sincronizarDadosAoVivo(); // Dispara imediatamente a corrida dos proxies
   
   // Configura para repetir a cada 10s
   loopDeSincronizacao = setInterval(sincronizarDadosAoVivo, 10000);
 }
 
-// O segredo está aqui: Escuta quando o Android minimiza ou maximiza o app
+// Escuta quando o Android minimiza ou maximiza o app
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    // Usuário reabriu o app! Reinicia o relógio instantaneamente
+    // Usuário reabriu o app! Reinicia instantâneo sem atrasos.
     iniciarLoop();
   } else {
-    // Usuário escondeu o app! Pausa tudo para não travar os proxies nem gastar bateria
+    // Escondeu o app: Pausa para economizar internet e não ser bloqueado.
     clearInterval(loopDeSincronizacao);
     document.getElementById('lastUpdate').innerText = "⏸️ Pausado em segundo plano...";
   }
@@ -299,7 +315,7 @@ document.getElementById('toggleParking').addEventListener('click', (e) => {
 
 document.getElementById('refreshBtn').addEventListener('click', () => {
   const btn = document.getElementById('refreshBtn');
-  btn.innerText = "Sincronizando...";
+  btn.innerText = "Forçando conexão...";
   sincronizarDadosAoVivo().then(() => btn.innerText = "Atualizar Agora 🔄");
 });
 
@@ -313,4 +329,4 @@ document.getElementById('btnMeuLocal').addEventListener('click', () => {
 
 // Inicialização ao abrir o app
 ativarGpsUsuario();
-iniciarLoop(); // Inicia o sistema inteligente
+iniciarLoop();
