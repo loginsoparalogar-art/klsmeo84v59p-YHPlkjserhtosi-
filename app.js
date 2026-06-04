@@ -80,22 +80,23 @@ function ativarGpsUsuario() {
 }
 
 // =====================================================================
-// SISTEMA BLINDADO: DUPLO PROXY COM CANCELAMENTO AUTOMÁTICO (TIMEOUT)
+// SISTEMA BLINDADO: ROLETA COM 3 PROXIES PARA EVITAR CONGESTIONAMENTO
 // =====================================================================
 async function fetchComFallback(urlBase) {
-  // Cria uma URL única para destruir o cache do celular
   const urlAlvo = `${urlBase}&_bot=${Date.now()}`;
+  const urlCodificada = encodeURIComponent(urlAlvo);
   
-  // Lista de proxies (Se o primeiro falhar, ele tenta o segundo na mesma hora)
+  // Agora temos 3 opções de rotas diferentes.
   const proxies = [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(urlAlvo)}`,
-    `https://corsproxy.io/?${encodeURIComponent(urlAlvo)}`
+    `https://api.codetabs.com/v1/proxy?quest=${urlCodificada}`,
+    `https://api.allorigins.win/raw?url=${urlCodificada}`,
+    `https://corsproxy.io/?${urlCodificada}`
   ];
 
   for (let proxy of proxies) {
     try {
       const controller = new AbortController();
-      // Se o proxy demorar mais de 5 segundos, aborta a missão e tenta o próximo!
+      // Tolerância de 5 segundos. Se o proxy não responder, ele aborta e vai pro próximo.
       const timeoutId = setTimeout(() => controller.abort(), 5000); 
 
       const response = await fetch(proxy, { 
@@ -108,13 +109,13 @@ async function fetchComFallback(urlBase) {
 
       if (response.ok) {
         const json = await response.json();
-        if (json) return json; // Retorna os dados com sucesso
+        if (json) return json; 
       }
     } catch (erro) {
-      console.warn("Proxy falhou ou demorou muito, tentando o plano B...", proxy);
+      console.warn("Proxy falhou ou muito lento, rotacionando...", proxy);
     }
   }
-  return null; // Retorna nulo apenas se TODOS os proxies falharem
+  return null; 
 }
 
 function extrairPontos(dados) {
@@ -149,9 +150,8 @@ async function sincronizarDadosAoVivo() {
       fetchComFallback(BASE_PARKING_URL)
     ]);
 
-    // Se ambos os proxies falharem (internet caiu ou proxies congestionados)
     if (!rawBikes && !rawParkings) {
-      statusText.innerText = "⚠️ Proxies congestionados. Tentando novamente...";
+      statusText.innerText = "⚠️ Tráfego intenso (Proxies lentos). Retentando...";
       return; 
     }
 
@@ -246,6 +246,34 @@ async function sincronizarDadosAoVivo() {
   }
 }
 
+// =====================================================================
+// GERENCIAMENTO INTELIGENTE DE SEGUNDO PLANO (VISIBILITY API)
+// =====================================================================
+let loopDeSincronizacao;
+
+function iniciarLoop() {
+  if (loopDeSincronizacao) clearInterval(loopDeSincronizacao);
+  
+  document.getElementById('lastUpdate').innerText = "🔄 Retomando conexão...";
+  sincronizarDadosAoVivo(); // Dispara imediatamente
+  
+  // Configura para repetir a cada 10s
+  loopDeSincronizacao = setInterval(sincronizarDadosAoVivo, 10000);
+}
+
+// O segredo está aqui: Escuta quando o Android minimiza ou maximiza o app
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    // Usuário reabriu o app! Reinicia o relógio instantaneamente
+    iniciarLoop();
+  } else {
+    // Usuário escondeu o app! Pausa tudo para não travar os proxies nem gastar bateria
+    clearInterval(loopDeSincronizacao);
+    document.getElementById('lastUpdate').innerText = "⏸️ Pausado em segundo plano...";
+  }
+});
+
+
 // --- CONTROLES DA INTERFACE ---
 document.getElementById('toggleBikes').addEventListener('click', (e) => {
   showBikes = !showBikes;
@@ -283,7 +311,6 @@ document.getElementById('btnMeuLocal').addEventListener('click', () => {
   }
 });
 
-// Inicialização e Loop
+// Inicialização ao abrir o app
 ativarGpsUsuario();
-sincronizarDadosAoVivo();
-setInterval(sincronizarDadosAoVivo, 10000);
+iniciarLoop(); // Inicia o sistema inteligente
